@@ -6,7 +6,7 @@ import time
 
 import torch
 from torch.utils.data import DataLoader
-from torch.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler, autocast
 
 from models.NN2 import FaceNet
 
@@ -14,7 +14,7 @@ from utils.utils import parse_args, transform, TripletDataset, BalancedBatchSamp
 from triplet_mining import semi_hard_triplet_mining, hard_negative_triplet_mining
 
 torch.set_float32_matmul_precision('high')
-torch.backends.cudnn.benchmark = True
+#torch.backends.cudnn.benchmark = True
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -31,12 +31,6 @@ N_VAL_TRIPLETS = 128
 DOCS_PATH = './docs/'
         
 # --------------------------------------------------------------------------------------------------------
-
-import torch
-from torch.utils.data import DataLoader
-from torch.amp import GradScaler, autocast
-from tqdm import tqdm
-import os
 
 def train(
     model: torch.nn.Module,
@@ -56,6 +50,7 @@ def train(
     total_accumulation_size = accumulation_steps * batch_size
     accumulated_embeddings = torch.zeros((total_accumulation_size, EMB_SIZE), device=device)
     accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.long, device=device)
+    accumulated_imgs = torch.zeros((total_accumulation_size, 3, 112, 112), dtype=DTYPE, device=device)
 
     for epoch in range(epochs):
         model.train()
@@ -69,11 +64,13 @@ def train(
             batch_index = (i % accumulation_steps) * batch_size
 
             # Remove .detach() here to maintain gradient computation graph
-            with autocast(dtype=DTYPE, device_type='cuda'):
-                embeddings = model(imgs).detach()
+            with torch.no_grad():
+                with autocast(dtype=DTYPE):
+                    embeddings = model(imgs)
             
             accumulated_embeddings[batch_index:batch_index + batch_size] = embeddings
             accumulated_labels[batch_index:batch_index + batch_size] = labels
+            accumulated_imgs[batch_index:batch_index + batch_size] = imgs
 
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
                 if epoch < epochs * CHANGE_MINING_STRATEGY:
@@ -81,11 +78,13 @@ def train(
                 else:
                     triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
 
-                anchor_imgs = imgs[triplets[:, 0]]
-                positive_imgs = imgs[triplets[:, 1]]
-                negative_imgs = imgs[triplets[:, 2]]
-
-                with autocast(dtype=DTYPE, device_type='cuda'):
+                anchor_imgs = accumulated_imgs[triplets[:, 0]]
+                positive_imgs = accumulated_imgs[triplets[:, 1]]
+                negative_imgs = accumulated_imgs[triplets[:, 2]]
+                
+                torch.cuda.synchronize()
+                
+                with autocast(dtype=DTYPE):
                     anchor_embeddings = model(anchor_imgs)
                     positive_embeddings = model(positive_imgs)
                     negative_embeddings = model(negative_imgs)
