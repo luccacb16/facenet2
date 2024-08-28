@@ -6,7 +6,7 @@ import time
 
 import torch
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 from models.NN2 import FaceNet
 
@@ -68,11 +68,11 @@ def train(
         for i, (imgs, labels) in enumerate(dataloader):
             imgs, labels = imgs.to(device), labels.to(device)
             
-            start_time = time.time()
+            #start_time = time.time()
             with autocast(dtype=DTYPE):
                 embeddings = model(imgs)
-            embeddings_time = time.time() - start_time
-            print(f"[{i}] Embedding calculation time: {embeddings_time:.3f}s")
+            #embeddings_time = time.time() - start_time
+            #print(f"[{i}] Embedding calculation time: {embeddings_time:.3f}s")
             
             start_idx = (i % accumulation_steps) * batch_size
             end_idx = start_idx + batch_size
@@ -85,22 +85,22 @@ def train(
                 all_embeddings = accumulated_embeddings[:current_size]
                 all_labels = accumulated_labels[:current_size]
                 
-                mining_start_time = time.time()
+                #mining_start_time = time.time()
                 if (epoch+1) < (epochs+1) * CHANGE_MINING_STRATEGY:
                     triplets = semi_hard_triplet_mining(embeddings=all_embeddings, labels=all_labels, margin=margin, device=device, hardest=False)
                 else:
                     triplets = hard_negative_triplet_mining(embeddings=all_embeddings, labels=all_labels, device=device)
-                mining_time = time.time() - mining_start_time
-                print(f"Triplet mining time: {mining_time:.3f}s")
+                #mining_time = time.time() - mining_start_time
+                #print(f"Triplet mining time: {mining_time:.3f}s")
                 
-                loss_start_time = time.time()
+                #loss_start_time = time.time()
                 anchor_embeddings = all_embeddings[triplets[:, 0]]
                 positive_embeddings = all_embeddings[triplets[:, 1]]
                 negative_embeddings = all_embeddings[triplets[:, 2]]
                 loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
                 loss = loss / accumulation_steps
-                loss_time = time.time() - loss_start_time
-                print(f"Loss calculation time: {loss_time:.3f}s")
+                #loss_time = time.time() - loss_start_time
+                #print(f"Loss calculation time: {loss_time:.3f}s")
                 
                 scaler.scale(loss).backward()
                 
@@ -108,8 +108,8 @@ def train(
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
-                update_time = time.time() - update_start_time
-                print(f"Weight update time: {update_time:.3f}s")
+                #update_time = time.time() - update_start_time
+                #print(f"Weight update time: {update_time:.3f}s")
                 
                 accumulated_loss += loss.item()
                 
@@ -147,6 +147,7 @@ if __name__ == '__main__':
     num_workers = args.num_workers
     DATA_PATH = args.data_path
     CHECKPOINT_PATH = args.checkpoint_path
+    colab = args.colab
     
     accumulation_steps = accumulation // batch_size
     
@@ -198,7 +199,9 @@ if __name__ == '__main__':
     
     # Modelo
     model = FaceNet(emb_size=EMB_SIZE).to(device)
-    model = torch.compile(model)
+    
+    if not colab:
+        model = torch.compile(model)
     
     # Otimizador, scheduler e scaler
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)

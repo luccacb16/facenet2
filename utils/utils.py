@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import argparse
 from PIL import Image
+import os
 
 import torch
 import torch.nn as nn
@@ -182,6 +183,9 @@ def save_losses(train_losses: list, val_losses: list, save_path: str = './imgs/'
         save_path (str): Caminho para salvar a imagem. Padrão é './imgs/'.
     """
     
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    
     plt.figure(figsize=(10, 6))
     plt.plot(train_losses, label='Train Loss')
     plt.plot(val_losses, label='Validation Loss')
@@ -210,5 +214,6 @@ def parse_args():
     parser.add_argument('--scheduler_step', type=int, default=15, help='Step size para o scheduler StepLR (default: 15)')
     parser.add_argument('--scheduler_gamma', type=float, default=0.1, help='Gamma para o scheduler StepLR (default: 0.1)')
     parser.add_argument('--device', type=str, default='cuda', help='Dispositivo para treinamento (default: cuda)')
+    parser.add_argument('--colab', type=bool, default=False, help='Se está rodando no Google Colab (default: False)')
     
     return parser.parse_args()
