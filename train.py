@@ -32,7 +32,11 @@ DOCS_PATH = './docs/'
         
 # --------------------------------------------------------------------------------------------------------
 
-from tqdm import tqdm  # Certifique-se de ter essa importação no início do seu script
+import torch
+from torch.utils.data import DataLoader
+from torch.amp import GradScaler, autocast
+from tqdm import tqdm
+import os
 
 def train(
     model: torch.nn.Module,
@@ -49,6 +53,10 @@ def train(
     accumulation_steps: int = 8,
     batch_size: int = 32
 ):
+    total_accumulation_size = accumulation_steps * batch_size
+    accumulated_embeddings = torch.zeros((total_accumulation_size, EMB_SIZE), device=device)
+    accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.long, device=device)
+
     for epoch in range(epochs):
         model.train()
         accumulated_loss = 0.0
@@ -58,49 +66,48 @@ def train(
         
         for i, (imgs, labels) in progress_bar:
             imgs, labels = imgs.to(device), labels.to(device)
-            
+            batch_index = (i % accumulation_steps) * batch_size
+
             with autocast(dtype=DTYPE, device_type='cuda'):
                 embeddings = model(imgs).detach()
-
-            # Mineração de triplas sem gradiente
-            if epoch < epochs * CHANGE_MINING_STRATEGY:
-                triplets = semi_hard_triplet_mining(embeddings, labels, margin, device)
-            else:
-                triplets = hard_negative_triplet_mining(embeddings, labels, device)
-
-            # Recalcular os embeddings dos triplets escolhidos para acumular gradiente
-            anchor_imgs = imgs[triplets[:, 0]]
-            positive_imgs = imgs[triplets[:, 1]]
-            negative_imgs = imgs[triplets[:, 2]]
             
-            with autocast(dtype=DTYPE, device_type='cuda'):
-                anchor_embeddings = model(anchor_imgs)
-                positive_embeddings = model(positive_imgs)
-                negative_embeddings = model(negative_imgs)
-                loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
-            
-            loss = loss / accumulation_steps
-            scaler.scale(loss).backward()
+            accumulated_embeddings[batch_index:batch_index + batch_size] = embeddings
+            accumulated_labels[batch_index:batch_index + batch_size] = labels
 
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
+                if epoch < epochs * CHANGE_MINING_STRATEGY:
+                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device)
+                else:
+                    triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
+
+                anchor_embeddings = accumulated_embeddings[triplets[:, 0]]
+                positive_embeddings = accumulated_embeddings[triplets[:, 1]]
+                negative_embeddings = accumulated_embeddings[triplets[:, 2]]
+                loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
+                loss = loss / accumulation_steps
+                scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
+                
                 accumulated_loss += loss.item() * accumulation_steps
+
+                # Limpar os buffers de acumulação para o próximo lote
+                accumulated_embeddings.zero_()
+                accumulated_labels.zero_()
 
         progress_bar.close()
 
         if scheduler is not None:
             scheduler.step()
 
-        # Avaliação de validação
         val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device, dtype=DTYPE)
         epoch_loss = accumulated_loss / len(dataloader)
-        
+
         print(f"Epoch [{epoch+1}/{epochs}] | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
         torch.save(model.state_dict(), os.path.join(checkpoint_path, f'epoch_{epoch+1}.pt'))
 
-        return epoch_loss, val_loss
+    return epoch_loss, val_loss
 
 # --------------------------------------------------------------------------------------------------------
 
