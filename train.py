@@ -68,6 +68,7 @@ def train(
             imgs, labels = imgs.to(device), labels.to(device)
             batch_index = (i % accumulation_steps) * batch_size
 
+            # Remove .detach() here to maintain gradient computation graph
             with autocast(dtype=DTYPE, device_type='cuda'):
                 embeddings = model(imgs).detach()
             
@@ -75,14 +76,11 @@ def train(
             accumulated_labels[batch_index:batch_index + batch_size] = labels
 
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
-                if epoch < epochs * CHANGE_MINING_STRATEGY:
-                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device)
-                else:
-                    triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
+                triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device)
 
-                anchor_embeddings = accumulated_embeddings[triplets[:, 0]]
-                positive_embeddings = accumulated_embeddings[triplets[:, 1]]
-                negative_embeddings = accumulated_embeddings[triplets[:, 2]]
+                anchor_embeddings = model(accumulated_embeddings[triplets[:, 0]])
+                positive_embeddings = model(accumulated_embeddings[triplets[:, 1]])
+                negative_embeddings = model(accumulated_embeddings[triplets[:, 2]])
                 loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
                 loss = loss / accumulation_steps
                 scaler.scale(loss).backward()
@@ -92,7 +90,7 @@ def train(
                 
                 accumulated_loss += loss.item() * accumulation_steps
 
-                # Limpar os buffers de acumulação para o próximo lote
+                # Clear the accumulation buffers for the next batch
                 accumulated_embeddings.zero_()
                 accumulated_labels.zero_()
 
