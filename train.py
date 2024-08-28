@@ -70,8 +70,9 @@ def train(
         for i, (imgs, labels) in enumerate(dataloader):
             imgs, labels = imgs.to(device), labels.to(device)
             
-            with autocast(dtype=DTYPE, device_type='cuda'):
-                embeddings = model(imgs)
+            with torch.no_grad():
+                with autocast(dtype=DTYPE, device_type='cuda'):
+                    embeddings = model(imgs)
             
             start_idx = (i % accumulation_steps) * batch_size
             end_idx = start_idx + batch_size
@@ -84,16 +85,27 @@ def train(
                 all_embeddings = accumulated_embeddings[:current_size]
                 all_labels = accumulated_labels[:current_size]
                 
-                if (epoch+1) < (epochs+1) * CHANGE_MINING_STRATEGY:
-                    triplets = semi_hard_triplet_mining(embeddings=all_embeddings, labels=all_labels, margin=margin, device=device, hardest=False)
-                else:
-                    triplets = hard_negative_triplet_mining(embeddings=all_embeddings, labels=all_labels, device=device)
-                
-                anchor_embeddings = all_embeddings[triplets[:, 0]]
-                positive_embeddings = all_embeddings[triplets[:, 1]]
-                negative_embeddings = all_embeddings[triplets[:, 2]]
-                loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
-                loss = loss / accumulation_steps
+                with autocast(dtype=DTYPE, device_type='cuda'):
+                    if (epoch+1) < (epochs+1) * CHANGE_MINING_STRATEGY:
+                        triplets = semi_hard_triplet_mining(embeddings=all_embeddings, labels=all_labels, margin=margin, device=device, hardest=False)
+                    else:
+                        triplets = hard_negative_triplet_mining(embeddings=all_embeddings, labels=all_labels, device=device)
+                    
+                    anchor_embeddings = all_embeddings[triplets[:, 0]]
+                    positive_embeddings = all_embeddings[triplets[:, 1]]
+                    negative_embeddings = all_embeddings[triplets[:, 2]]
+                    
+                    # Recompute embeddings for selected triplets to create graph
+                    anchor_imgs = imgs[triplets[:, 0] % batch_size]
+                    positive_imgs = imgs[triplets[:, 1] % batch_size]
+                    negative_imgs = imgs[triplets[:, 2] % batch_size]
+                    
+                    anchor_embeddings = model(anchor_imgs)
+                    positive_embeddings = model(positive_imgs)
+                    negative_embeddings = model(negative_imgs)
+                    
+                    loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
+                    loss = loss / accumulation_steps
                 
                 scaler.scale(loss).backward()
 
@@ -104,18 +116,19 @@ def train(
 
                 accumulated_loss += loss.item()
                 
-                progress_bar.update(1)
+            progress_bar.update(1)
                     
         progress_bar.close()
 
         if scheduler is not None:
             scheduler.step()
         
-        val_loss = calc_val_loss(model=model, 
-                                val_loader=val_dataloader,
-                                loss=triplet_loss,
-                                device=device,
-                                dtype=DTYPE)
+        with torch.no_grad():
+            val_loss = calc_val_loss(model=model, 
+                                    val_loader=val_dataloader,
+                                    loss=triplet_loss,
+                                    device=device,
+                                    dtype=DTYPE)
         
         val_losses.append(val_loss)
         train_losses.append(accumulated_loss)
