@@ -69,7 +69,7 @@ def train(
             imgs, labels = imgs.to(device), labels.to(device)
             
             #start_time = time.time()
-            with autocast(dtype=DTYPE):
+            with autocast(dtype=DTYPE, device_type='cuda'):
                 embeddings = model(imgs)
             #embeddings_time = time.time() - start_time
             #print(f"[{i}] Embedding calculation time: {embeddings_time:.3f}s")
