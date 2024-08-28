@@ -10,7 +10,7 @@ import torch.nn as nn
 from torchvision.transforms import Compose, ToTensor, Normalize, Resize
 from torch.utils.data import Dataset, Sampler
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 transform = Compose(
     [
@@ -52,7 +52,7 @@ class BalancedBatchSampler(Sampler):
         self.label_set = set(dataset.labels)
         self.labels_to_indices = {label: np.where(np.array(dataset.labels) == label)[0] for label in self.label_set}
         self.current_step = 0
-        self.indices_array = self._generate_indices()
+        #self.indices_array = self._generate_indices()
 
     def _generate_indices(self):
         selected_labels = np.random.choice(list(self.label_set), self.batch_size, replace=False)
@@ -61,11 +61,19 @@ class BalancedBatchSampler(Sampler):
         return indices_array
 
     def __iter__(self):
+        all_indices = 0
         self.current_step = 0
         
-        for _ in range(self.accumulation_steps):
-            yield self.indices_array[self.current_step]
-            self.current_step += 1
+        while all_indices < len(self.dataset):
+            self.indices_array = self._generate_indices()
+            for _ in range(self.accumulation_steps):
+                if all_indices >= len(self.dataset):
+                    break
+                all_indices += 8
+                #print(len(self.indices_array), self.accumulation_steps, self.current_step)
+                yield self.indices_array[self.current_step]
+                if self.current_step != self.accumulation_steps-1:
+                    self.current_step += 1
 
     def __len__(self):
         return len(self.dataset) // self.accumulation
@@ -159,7 +167,7 @@ def calc_val_loss(model, val_loader, loss, device='cuda', dtype=torch.bfloat16):
             positives = positives.to(device)
             negatives = negatives.to(device)
         
-            with autocast(dtype=dtype):
+            with autocast(dtype=dtype, device_type='cuda'):
                 anchor_embeddings = model(anchors)
                 positive_embeddings = model(positives)
                 negative_embeddings = model(negatives)

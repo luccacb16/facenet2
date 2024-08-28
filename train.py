@@ -6,7 +6,7 @@ import time
 
 import torch
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 from models.NN2 import FaceNet
 
@@ -67,9 +67,8 @@ def train(
         
         for i, (imgs, labels) in enumerate(dataloader):
             imgs, labels = imgs.to(device), labels.to(device)
-            print(i, imgs.size())
             #start_time = time.time()
-            with autocast(dtype=DTYPE):
+            with autocast(dtype=DTYPE, device_type='cuda'):
                 embeddings = model(imgs)
             #embeddings_time = time.time() - start_time
             #print(f"[{i}] Embedding calculation time: {embeddings_time:.3f}s")
@@ -104,7 +103,7 @@ def train(
                 
                 scaler.scale(loss).backward()
                 
-                update_start_time = time.time()
+                #update_start_time = time.time()
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
@@ -163,7 +162,6 @@ if __name__ == '__main__':
     
     # Treino
     min_images_per_id = accumulation // batch_size
-    train_df = train_df.sample(n=6400).reset_index(drop=True)
     train_df = train_df.groupby('id').filter(lambda x: len(x) >= min_images_per_id)
     train_df['path'] = train_df['path'].apply(lambda x: os.path.join(DATA_PATH, 'CASIA/casia-faces/', x))
     
