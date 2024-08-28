@@ -97,9 +97,10 @@ def train(
                 
                 scaler.scale(loss).backward()
 
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad(set_to_none=True)
+                if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
 
                 accumulated_loss += loss.item()
                 
