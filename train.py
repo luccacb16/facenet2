@@ -32,6 +32,8 @@ DOCS_PATH = './docs/'
         
 # --------------------------------------------------------------------------------------------------------
 
+from tqdm import tqdm  # Certifique-se de ter essa importação no início do seu script
+
 def train(
     model: torch.nn.Module,
     dataloader: DataLoader,
@@ -52,7 +54,9 @@ def train(
         accumulated_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
         
-        for i, (imgs, labels) in enumerate(dataloader):
+        progress_bar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}/{epochs}", unit='batch')
+        
+        for i, (imgs, labels) in progress_bar:
             imgs, labels = imgs.to(device), labels.to(device)
             
             with autocast(dtype=DTYPE, device_type='cuda'):
@@ -63,9 +67,6 @@ def train(
                 triplets = semi_hard_triplet_mining(embeddings, labels, margin, device)
             else:
                 triplets = hard_negative_triplet_mining(embeddings, labels, device)
-
-            if len(triplets) == 0:
-                continue
 
             # Recalcular os embeddings dos triplets escolhidos para acumular gradiente
             anchor_imgs = imgs[triplets[:, 0]]
@@ -78,14 +79,16 @@ def train(
                 negative_embeddings = model(negative_imgs)
                 loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
             
-            loss = loss / accumulation_steps  # Normalizar pelo número de passos de acumulação
+            loss = loss / accumulation_steps
             scaler.scale(loss).backward()
 
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
-                accumulated_loss += loss.item() * accumulation_steps  # Desfazer a normalização para registro
+                accumulated_loss += loss.item() * accumulation_steps
+
+        progress_bar.close()
 
         if scheduler is not None:
             scheduler.step()
@@ -96,6 +99,8 @@ def train(
         
         print(f"Epoch [{epoch+1}/{epochs}] | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
         torch.save(model.state_dict(), os.path.join(checkpoint_path, f'epoch_{epoch+1}.pt'))
+
+        return epoch_loss, val_loss
 
 # --------------------------------------------------------------------------------------------------------
 
