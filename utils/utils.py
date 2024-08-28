@@ -41,8 +41,8 @@ class TripletDataset(Dataset):
         image = image.to(self.dtype)
         label = torch.tensor(self.labels[idx], dtype=torch.int16)
         
-
         return image, label
+    
 class BalancedBatchSampler(Sampler):
     def __init__(self, dataset, accumulation, batch_size):
         self.dataset = dataset

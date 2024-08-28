@@ -44,99 +44,58 @@ def train(
     margin: float = 0.2,
     checkpoint_path: str = './checkpoints/',
     device: str = 'cuda',
-    accumulation_steps: int = 4,
-    batch_size: int = 8
+    accumulation_steps: int = 8,
+    batch_size: int = 32
 ):
-    train_losses = []
-    val_losses = []
-    
-    model.train()
-    
-    total_accumulation_size = batch_size * accumulation_steps
-    
     for epoch in range(epochs):
+        model.train()
         accumulated_loss = 0.0
-        accumulated_embeddings = torch.zeros((total_accumulation_size, EMB_SIZE), device=device)
-        accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.int16, device=device)
-        
-        progress_bar = tqdm(
-            total=len(dataloader),
-            desc=f"Epoch [{epoch+1}/{epochs}]",
-            unit='batch',
-        )
-        
         optimizer.zero_grad(set_to_none=True)
-
+        
         for i, (imgs, labels) in enumerate(dataloader):
             imgs, labels = imgs.to(device), labels.to(device)
             
-            with torch.no_grad():
-                with autocast(dtype=DTYPE, device_type='cuda'):
-                    embeddings = model(imgs)
+            with autocast(dtype=DTYPE, device_type='cuda'):
+                embeddings = model(imgs).detach()
+
+            # Mineração de triplas sem gradiente
+            if epoch < epochs * CHANGE_MINING_STRATEGY:
+                triplets = semi_hard_triplet_mining(embeddings, labels, margin, device)
+            else:
+                triplets = hard_negative_triplet_mining(embeddings, labels, device)
+
+            if len(triplets) == 0:
+                continue
+
+            # Recalcular os embeddings dos triplets escolhidos para acumular gradiente
+            anchor_imgs = imgs[triplets[:, 0]]
+            positive_imgs = imgs[triplets[:, 1]]
+            negative_imgs = imgs[triplets[:, 2]]
             
-            start_idx = (i % accumulation_steps) * batch_size
-            end_idx = start_idx + batch_size
+            with autocast(dtype=DTYPE, device_type='cuda'):
+                anchor_embeddings = model(anchor_imgs)
+                positive_embeddings = model(positive_imgs)
+                negative_embeddings = model(negative_imgs)
+                loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
             
-            accumulated_embeddings[start_idx:end_idx] = embeddings
-            accumulated_labels[start_idx:end_idx] = labels
-            
+            loss = loss / accumulation_steps  # Normalizar pelo número de passos de acumulação
+            scaler.scale(loss).backward()
+
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
-                current_size = end_idx
-                all_embeddings = accumulated_embeddings[:current_size]
-                all_labels = accumulated_labels[:current_size]
-                
-                with autocast(dtype=DTYPE, device_type='cuda'):
-                    if (epoch+1) < (epochs+1) * CHANGE_MINING_STRATEGY:
-                        triplets = semi_hard_triplet_mining(embeddings=all_embeddings, labels=all_labels, margin=margin, device=device, hardest=False)
-                    else:
-                        triplets = hard_negative_triplet_mining(embeddings=all_embeddings, labels=all_labels, device=device)
-                    
-                    anchor_embeddings = all_embeddings[triplets[:, 0]]
-                    positive_embeddings = all_embeddings[triplets[:, 1]]
-                    negative_embeddings = all_embeddings[triplets[:, 2]]
-                    
-                    # Recompute embeddings for selected triplets to create graph
-                    anchor_imgs = imgs[triplets[:, 0] % batch_size]
-                    positive_imgs = imgs[triplets[:, 1] % batch_size]
-                    negative_imgs = imgs[triplets[:, 2] % batch_size]
-                    
-                    anchor_embeddings = model(anchor_imgs)
-                    positive_embeddings = model(positive_imgs)
-                    negative_embeddings = model(negative_imgs)
-                    
-                    loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
-                    loss = loss / accumulation_steps
-                
-                scaler.scale(loss).backward()
-
-                if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad(set_to_none=True)
-
-                accumulated_loss += loss.item()
-                
-            progress_bar.update(1)
-                    
-        progress_bar.close()
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                accumulated_loss += loss.item() * accumulation_steps  # Desfazer a normalização para registro
 
         if scheduler is not None:
             scheduler.step()
+
+        # Avaliação de validação
+        val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device, dtype=DTYPE)
+        epoch_loss = accumulated_loss / len(dataloader)
         
-        with torch.no_grad():
-            val_loss = calc_val_loss(model=model, 
-                                    val_loader=val_dataloader,
-                                    loss=triplet_loss,
-                                    device=device,
-                                    dtype=DTYPE)
-        
-        val_losses.append(val_loss)
-        train_losses.append(accumulated_loss)
-        
-        print(f"Epoch [{epoch+1}/{epochs}] | loss: {accumulated_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
+        print(f"Epoch [{epoch+1}/{epochs}] | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
         torch.save(model.state_dict(), os.path.join(checkpoint_path, f'epoch_{epoch+1}.pt'))
-    
-    return train_losses, val_losses
 
 # --------------------------------------------------------------------------------------------------------
 
