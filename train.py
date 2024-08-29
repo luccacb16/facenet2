@@ -6,7 +6,7 @@ import time
 
 import torch
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 from models.NN2 import FaceNet
 
@@ -14,7 +14,7 @@ from utils.utils import parse_args, transform, TripletDataset, BalancedBatchSamp
 from triplet_mining import semi_hard_triplet_mining, hard_negative_triplet_mining
 
 torch.set_float32_matmul_precision('high')
-#torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.benchmark = True
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -57,13 +57,14 @@ def train(
         accumulated_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
         
-        progress_bar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}/{epochs}", unit='batch')
+        total_steps = len(dataloader) // accumulation_steps
+        progress_bar = tqdm(total=total_steps, desc=f"Epoch {epoch+1}/{epochs}", unit='batch')
+        
         
         for i, (imgs, labels) in progress_bar:
             imgs, labels = imgs.to(device), labels.to(device)
             batch_index = (i % accumulation_steps) * batch_size
 
-            # Remove .detach() here to maintain gradient computation graph
             with torch.no_grad():
                 with autocast(dtype=DTYPE):
                     embeddings = model(imgs)
@@ -74,15 +75,13 @@ def train(
 
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
                 if epoch < epochs * CHANGE_MINING_STRATEGY:
-                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device)
+                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=False)
                 else:
                     triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
 
                 anchor_imgs = accumulated_imgs[triplets[:, 0]]
                 positive_imgs = accumulated_imgs[triplets[:, 1]]
                 negative_imgs = accumulated_imgs[triplets[:, 2]]
-                
-                torch.cuda.synchronize()
                 
                 with autocast(dtype=DTYPE):
                     anchor_embeddings = model(anchor_imgs)
@@ -102,6 +101,8 @@ def train(
                 # Clear the accumulation buffers for the next batch
                 accumulated_embeddings.zero_()
                 accumulated_labels.zero_()
+                
+                progress_bar.update(1)
 
         progress_bar.close()
 

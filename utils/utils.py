@@ -10,7 +10,7 @@ import torch.nn as nn
 from torchvision.transforms import Compose, ToTensor, Normalize, Resize
 from torch.utils.data import Dataset, Sampler
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import autocast
 
 transform = Compose(
     [
