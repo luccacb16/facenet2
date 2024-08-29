@@ -167,7 +167,7 @@ def calc_val_loss(model, val_loader, loss, device='cuda', dtype=torch.bfloat16):
             positives = positives.to(device)
             negatives = negatives.to(device)
         
-            with autocast(dtype=dtype):
+            with autocast(dtype=dtype, device_type='cuda'):
                 anchor_embeddings = model(anchors)
                 positive_embeddings = model(positives)
                 negative_embeddings = model(negatives)

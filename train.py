@@ -26,7 +26,7 @@ if torch.cuda.is_available():
         DTYPE = torch.float16
         
 EMB_SIZE = 64
-CHANGE_MINING_STRATEGY = 0.4
+CHANGE_MINING_STRATEGY = 0.2
 N_VAL_TRIPLETS = 128
 DOCS_PATH = './docs/'
         
@@ -58,15 +58,14 @@ def train(
         optimizer.zero_grad(set_to_none=True)
         
         total_steps = len(dataloader) // accumulation_steps
-        progress_bar = tqdm(total=total_steps, desc=f"Epoch {epoch+1}/{epochs}", unit='batch')
-        
+        progress_bar = tqdm(enumerate(dataloader), total=total_steps, desc=f"Epoch {epoch+1}/{epochs}", unit='batch')
         
         for i, (imgs, labels) in progress_bar:
             imgs, labels = imgs.to(device), labels.to(device)
             batch_index = (i % accumulation_steps) * batch_size
 
             with torch.no_grad():
-                with autocast(dtype=DTYPE):
+                with autocast(dtype=DTYPE, device_type='cuda'):
                     embeddings = model(imgs)
             
             accumulated_embeddings[batch_index:batch_index + batch_size] = embeddings
@@ -83,7 +82,7 @@ def train(
                 positive_imgs = accumulated_imgs[triplets[:, 1]]
                 negative_imgs = accumulated_imgs[triplets[:, 2]]
                 
-                with autocast(dtype=DTYPE):
+                with autocast(dtype=DTYPE, device_type='cuda'):
                     anchor_embeddings = model(anchor_imgs)
                     positive_embeddings = model(positive_imgs)
                     negative_embeddings = model(negative_imgs)
