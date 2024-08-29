@@ -1,8 +1,6 @@
 import pandas as pd
-import numpy as np
 from tqdm import tqdm
 import os
-import time
 
 import torch
 from torch.utils.data import DataLoader
@@ -65,7 +63,7 @@ def train(
             batch_index = (i % accumulation_steps) * batch_size
 
             with torch.no_grad():
-                with autocast(dtype=DTYPE, device_type='cuda'):
+                with autocast(dtype=DTYPE, device_type=device):
                     embeddings = model(imgs)
             
             accumulated_embeddings[batch_index:batch_index + batch_size] = embeddings
@@ -82,7 +80,7 @@ def train(
                 positive_imgs = accumulated_imgs[triplets[:, 1]]
                 negative_imgs = accumulated_imgs[triplets[:, 2]]
                 
-                with autocast(dtype=DTYPE, device_type='cuda'):
+                with autocast(dtype=DTYPE, device_type=device):
                     anchor_embeddings = model(anchor_imgs)
                     positive_embeddings = model(positive_imgs)
                     negative_embeddings = model(negative_imgs)
@@ -97,7 +95,6 @@ def train(
                 
                 accumulated_loss += loss.item() * accumulation_steps
 
-                # Clear the accumulation buffers for the next batch
                 accumulated_embeddings.zero_()
                 accumulated_labels.zero_()
                 
