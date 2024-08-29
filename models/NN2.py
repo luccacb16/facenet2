@@ -42,7 +42,6 @@ class ConvBlock(nn.Module):
         super(ConvBlock, self).__init__()
         
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
-        nn.init.kaiming_normal_(self.conv.weight, mode='fan_out', nonlinearity='relu')
         self.bn = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
         
@@ -186,6 +185,19 @@ class FaceNet(nn.Module):
         
         self.l2_norm = L2Norm()
         self.droupout = nn.Dropout(0.4)
+        
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(module, nn.BatchNorm2d):
+                nn.init.constant_(module.weight, 1)
+                nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.Linear):
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(module.bias, 0)
         
     def forward(self, x):
         x = self.conv1(x)

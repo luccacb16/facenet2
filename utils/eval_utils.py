@@ -60,13 +60,13 @@ def plot_distribution_and_ROC(pairs: pd.DataFrame, model_name: str, target_far=1
     fig, ax = plt.subplots(1, 2, figsize=(12, 5))
     
     # Gráfico de distribuição de distâncias
-    pairs[pairs['id'] == 1][col_name].plot.kde(ax=ax[0])
-    pairs[pairs['id'] == 0][col_name].plot.kde(ax=ax[0])
+    pairs[pairs['label'] == 1][col_name].plot.kde(ax=ax[0])
+    pairs[pairs['label'] == 0][col_name].plot.kde(ax=ax[0])
     ax[0].set_title(f'Distances distribution ({model_name})')
     ax[0].legend(['Positive', 'Negative'])
     
     # Cálculo da curva ROC e AUC
-    fpr, tpr, thresholds = roc_curve(pairs['id'], -pairs['distance'])
+    fpr, tpr, thresholds = roc_curve(pairs['label'], -pairs['distance'])
     roc_auc = auc(fpr, tpr)
     
     # Encontra o threshold ótimo
@@ -128,11 +128,11 @@ def eval_epochs(epochs_path: str, pairs: pd.DataFrame, model_class: nn.Module, b
         
 def distance_stats(pairs: pd.DataFrame) -> None:
     col_name = 'distance'
-    pos_mean = pairs[pairs['id'] == 1][col_name].mean()
-    pos_std = pairs[pairs['id'] == 1][col_name].std()
+    pos_mean = pairs[pairs['label'] == 1][col_name].mean()
+    pos_std = pairs[pairs['label'] == 1][col_name].std()
 
-    neg_mean = pairs[pairs['id'] == 0][col_name].mean()
-    neg_std = pairs[pairs['id'] == 0][col_name].std()
+    neg_mean = pairs[pairs['label'] == 0][col_name].mean()
+    neg_std = pairs[pairs['label'] == 0][col_name].std()
     
     return pos_mean, pos_std, neg_mean, neg_std
     
@@ -147,7 +147,7 @@ def accuracy(pairs: pd.DataFrame, threshold: float) -> float:
     Returns:
         - float: Acurácia do modelo.
     '''
-    return sum((pairs['distance'] < threshold) == pairs['id']) / len(pairs)
+    return sum((pairs['distance'] < threshold) == pairs['label']) / len(pairs)
 
 def VAL(pairs: pd.DataFrame, threshold: float) -> float:
     '''
@@ -162,7 +162,7 @@ def VAL(pairs: pd.DataFrame, threshold: float) -> float:
     '''
     
     # Pares verdadeiramente da mesma pessoa
-    true_positives = pairs['id'] == 1
+    true_positives = pairs['label'] == 1
     # Pares classificados como da mesma pessoa com base no threshold
     classified_as_true = pairs['distance'] < threshold
     # Calcula VAL
@@ -183,7 +183,7 @@ def FAR(pairs: pd.DataFrame, threshold: float) -> float:
     '''
     
     # Pares verdadeiramente de pessoas diferentes
-    true_negatives = pairs['id'] == 0
+    true_negatives = pairs['label'] == 0
     # Pares classificados como da mesma pessoa com base no threshold
     classified_as_true = pairs['distance'] < threshold
     # Calcula FAR
@@ -191,7 +191,7 @@ def FAR(pairs: pd.DataFrame, threshold: float) -> float:
     
     return far
 
-class MNISTPairsDataset(Dataset):
+class LFWPairsDataset(Dataset):
     def __init__(self, pairs_df, transform=None):
         self.pairs_df = pairs_df
         self.transform = transform
@@ -201,9 +201,10 @@ class MNISTPairsDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.pairs_df.iloc[idx]
-        img1 = Image.fromarray(row['img1'])
-        img2 = Image.fromarray(row['img2'])
-        label = row['id']
+        
+        img1 = Image.open(row['img1'])
+        img2 = Image.open(row['img2'])
+        label = row['label']
 
         if self.transform:
             img1 = self.transform(img1)
@@ -215,8 +216,8 @@ def calculate_distances(model: nn.Module, pairs: pd.DataFrame, batch_size=32, tr
     model.to(device)
     model.eval()
     
-    dataset = MNISTPairsDataset(pairs, transform)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    dataset = LFWPairsDataset(pairs, transform)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=1)
     
     distances = []
 
