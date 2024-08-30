@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import argparse
@@ -44,39 +45,38 @@ class TripletDataset(Dataset):
         return image, label
     
 class BalancedBatchSampler(Sampler):
-    def __init__(self, dataset, accumulation, batch_size):
+    def __init__(self, dataset, accumulation, batch_size, epochs):
         self.dataset = dataset
         self.accumulation = accumulation
         self.batch_size = batch_size
         self.accumulation_steps = accumulation // batch_size
-        self.label_set = set(dataset.labels)
+        self.label_set = list(set(dataset.labels))
         self.labels_to_indices = {label: np.where(np.array(dataset.labels) == label)[0] for label in self.label_set}
-        self.current_step = 0
-        #self.indices_array = self._generate_indices()
-
-    def _generate_indices(self):
-        selected_labels = np.random.choice(list(self.label_set), self.batch_size, replace=False)
-        indices = {label: self.labels_to_indices[label][:self.accumulation_steps] for label in selected_labels}
-        indices_array = np.array([[indices[label][i] for label in selected_labels] for i in range(self.accumulation_steps)])
-        return indices_array
-
-    def __iter__(self):
-        all_indices = 0
-        self.current_step = 0
+        self.num_batches = len(dataset) // batch_size
+        self.num_accumulation_batches = self.num_batches // self.accumulation_steps
+        self.epochs = epochs
+        self.epoch = 0
         
-        while all_indices < len(self.dataset):
-            self.indices_array = self._generate_indices()
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+        
+    def __iter__(self):
+        pbar = tqdm(total=self.num_accumulation_batches, desc=f'Epoch {self.epoch+1}/{self.epochs}', unit='batch')
+        for _ in range(self.num_accumulation_batches):
+            selected_labels = np.random.choice(self.label_set, self.batch_size, replace=False)
+            indices = []
             for _ in range(self.accumulation_steps):
-                if all_indices >= len(self.dataset):
-                    break
-                all_indices += 8
-                #print(len(self.indices_array), self.accumulation_steps, self.current_step)
-                yield self.indices_array[self.current_step]
-                if self.current_step != self.accumulation_steps-1:
-                    self.current_step += 1
+                batch_indices = []
+                for label in selected_labels:
+                    idx = np.random.choice(self.labels_to_indices[label])
+                    batch_indices.append(idx)
+                indices.extend(batch_indices)
+                yield batch_indices
+            pbar.update(1)
+        pbar.close()
 
     def __len__(self):
-        return len(self.dataset) // self.accumulation
+        return self.num_accumulation_batches
 
 class TripletLoss(nn.Module):
     def __init__(self, margin=0.2):

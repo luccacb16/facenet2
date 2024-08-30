@@ -14,7 +14,7 @@ from triplet_mining import semi_hard_triplet_mining, hard_negative_triplet_minin
 torch.set_float32_matmul_precision('high')
 torch.backends.cudnn.benchmark = True
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
 DTYPE = torch.bfloat16
 if torch.cuda.is_available():
@@ -42,7 +42,7 @@ def train(
     margin: float = 0.2,
     checkpoint_path: str = './checkpoints/',
     device: str = 'cuda',
-    accumulation_steps: int = 8,
+    accumulation_steps: int = 16,
     batch_size: int = 32
 ):
     total_accumulation_size = accumulation_steps * batch_size
@@ -51,16 +51,15 @@ def train(
     accumulated_imgs = torch.zeros((total_accumulation_size, 3, 112, 112), dtype=DTYPE, device=device)
 
     for epoch in range(epochs):
+        dataloader.batch_sampler.set_epoch(epoch)
         model.train()
         accumulated_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
         
-        total_steps = len(dataloader) // accumulation_steps
-        progress_bar = tqdm(enumerate(dataloader), total=total_steps, desc=f"Epoch {epoch+1}/{epochs}", unit='batch')
-        
-        for i, (imgs, labels) in progress_bar:
+        batch_in_accumulation = 0
+        for i, (imgs, labels) in enumerate(dataloader):
             imgs, labels = imgs.to(device), labels.to(device)
-            batch_index = (i % accumulation_steps) * batch_size
+            batch_index = batch_in_accumulation * batch_size
 
             with torch.no_grad():
                 with autocast(dtype=DTYPE, device_type=device):
@@ -70,7 +69,9 @@ def train(
             accumulated_labels[batch_index:batch_index + batch_size] = labels
             accumulated_imgs[batch_index:batch_index + batch_size] = imgs
 
-            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
+            batch_in_accumulation += 1
+
+            if batch_in_accumulation == accumulation_steps:
                 if epoch < epochs * CHANGE_MINING_STRATEGY:
                     triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=False)
                 else:
@@ -97,11 +98,10 @@ def train(
 
                 accumulated_embeddings.zero_()
                 accumulated_labels.zero_()
+                accumulated_imgs.zero_()
                 
-                progress_bar.update(1)
-
-        progress_bar.close()
-
+                batch_in_accumulation = 0
+                
         if scheduler is not None:
             scheduler.step()
 
@@ -167,7 +167,8 @@ if __name__ == '__main__':
 
     sampler = BalancedBatchSampler(dataset=triplet_dataset,
                                    accumulation=accumulation,
-                                   batch_size=batch_size)
+                                   batch_size=batch_size,
+                                   epochs=epochs)
     
     dataloader = DataLoader(triplet_dataset, batch_sampler=sampler,
                             pin_memory=True, num_workers=num_workers)
