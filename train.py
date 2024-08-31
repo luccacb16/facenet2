@@ -72,7 +72,7 @@ def train(
             batch_in_accumulation += 1
 
             if batch_in_accumulation == accumulation_steps:
-                if CHANGE_MINING_STRATEGY > 0 and (epoch + 1) == CHANGE_MINING_STRATEGY:
+                if CHANGE_MINING_STRATEGY > 0 and (epoch + 1) > CHANGE_MINING_STRATEGY:
                     triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
                 else:
                     triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=False)
