@@ -24,7 +24,7 @@ if torch.cuda.is_available():
         DTYPE = torch.float16
         
 EMB_SIZE = 64
-CHANGE_MINING_STRATEGY = 0.2
+CHANGE_MINING_STRATEGY = 0
 N_VAL_TRIPLETS = 128
 DOCS_PATH = './docs/'
         
@@ -72,10 +72,10 @@ def train(
             batch_in_accumulation += 1
 
             if batch_in_accumulation == accumulation_steps:
-                if epoch < epochs * CHANGE_MINING_STRATEGY:
-                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=False)
-                else:
+                if CHANGE_MINING_STRATEGY > 0 and (epoch + 1) == CHANGE_MINING_STRATEGY:
                     triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
+                else:
+                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=False)
 
                 anchor_imgs = accumulated_imgs[triplets[:, 0]]
                 positive_imgs = accumulated_imgs[triplets[:, 1]]
@@ -92,6 +92,8 @@ def train(
                 scaler.step(optimizer)
                 scaler.update()
                 
+                if scheduler is not None:
+                    scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
                 
                 accumulated_loss += loss.item() * accumulation_steps
@@ -101,9 +103,6 @@ def train(
                 accumulated_imgs.zero_()
                 
                 batch_in_accumulation = 0
-                
-        if scheduler is not None:
-            scheduler.step()
 
         val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device, dtype=DTYPE)
         epoch_loss = accumulated_loss / len(dataloader)
@@ -126,6 +125,8 @@ if __name__ == '__main__':
     DATA_PATH = args.data_path
     CHECKPOINT_PATH = args.checkpoint_path
     colab = args.colab
+    restore_from_checkpoint = args.restore
+    CHANGE_MINING_STRATEGY = args.change_mining_step
     
     accumulation_steps = accumulation // batch_size
     
@@ -177,15 +178,29 @@ if __name__ == '__main__':
     triplet_loss = TripletLoss(margin=margin)
     
     # Modelo
-    model = FaceNet(emb_size=EMB_SIZE).to(device)
+    model = FaceNet(emb_size=EMB_SIZE, 
+                    restore_from_checkpoint=restore_from_checkpoint).to(device)
     
     if not colab:
         model = torch.compile(model)
     
-    # Otimizador, scheduler e scaler
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.1)
+    # Scaler, otimizador e scheduler
     scaler = GradScaler()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=1e-3,
+        total_steps=len(dataloader) * epochs,
+        epochs=epochs,
+        steps_per_epoch=len(dataloader),
+        pct_start=0.3,
+        anneal_strategy='cos',
+        cycle_momentum=True,
+        base_momentum=0.85,
+        max_momentum=0.95,
+        div_factor=25,
+        final_div_factor=1e4
+    )
         
     train_losses, val_losses = train(
         model               = model,

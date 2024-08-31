@@ -218,10 +218,8 @@ def parse_args():
     parser.add_argument('--num_workers', type=int, default=1, help='Número de workers para o DataLoader (default: 1)')
     parser.add_argument('--data_path', type=str, default='./data/', help='Caminho para o dataset (default: ./data/)')
     parser.add_argument('--checkpoint_path', type=str, default='./checkpoints/', help='Caminho para salvar os checkpoints (default: ./checkpoints/)')
-    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate (default: 1e-4)')
-    parser.add_argument('--scheduler_step', type=int, default=15, help='Step size para o scheduler StepLR (default: 15)')
-    parser.add_argument('--scheduler_gamma', type=float, default=0.1, help='Gamma para o scheduler StepLR (default: 0.1)')
     parser.add_argument('--device', type=str, default='cuda', help='Dispositivo para treinamento (default: cuda)')
     parser.add_argument('--colab', type=bool, default=False, help='Se está rodando no Google Colab (default: False)')
+    parser.add_argument('--restore', type=str, default=None, help='Caminho para um checkpoint para restaurar o treinamento (default: None)')
     
     return parser.parse_args()

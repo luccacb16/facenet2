@@ -144,8 +144,18 @@ class InceptionModule(nn.Module):
         return torch.cat(branches, 1)
     
 class FaceNet(nn.Module):
-    def __init__(self, emb_size: int = 64):
+    def __init__(self, emb_size: int = 64, restore_from_checkpoint: str = None):
         super(FaceNet, self).__init__()
+        
+        if restore_from_checkpoint is not None:
+            try:
+                load = torch.load(restore_from_checkpoint)
+                load = {k.replace('_orig_mod.', ''): v for k, v in load.items()}
+                self.load_state_dict(load)
+            except FileNotFoundError:
+                print(f"Checkpoint '{restore_from_checkpoint}' not found.")
+            except RuntimeError as e:
+                print(f"Error loading the checkpoint: {e}")
         
         self.conv1 = ConvBlock(
             in_channels=3,
@@ -187,7 +197,7 @@ class FaceNet(nn.Module):
         self.droupout = nn.Dropout(0.4)
         
         self._initialize_weights()
-
+        
     def _initialize_weights(self):
         for module in self.modules():
             if isinstance(module, nn.Conv2d):
