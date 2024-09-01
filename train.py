@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from torch.amp import GradScaler, autocast
 
 from models.NN2 import FaceNet
+from models.InceptionResNetV1 import InceptionResnetV1
 
 from utils.utils import parse_args, transform, TripletDataset, BalancedBatchSampler, TripletLoss, ValTripletsDataset, calc_val_loss, save_losses
 from triplet_mining import semi_hard_triplet_mining, hard_negative_triplet_mining
@@ -181,6 +182,7 @@ if __name__ == '__main__':
     # Modelo
     model = FaceNet(emb_size=EMB_SIZE, 
                     restore_from_checkpoint=restore_from_checkpoint).to(device)
+    #model = InceptionResnetV1(emb_size=EMB_SIZE).to(device)
     
     if not colab:
         model = torch.compile(model)
