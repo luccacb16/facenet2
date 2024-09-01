@@ -203,7 +203,18 @@ def save_losses(train_losses: list, val_losses: list, save_path: str = './imgs/'
     plt.legend()
     plt.grid()
     plt.savefig(save_path + 'losses.png')
-
+    
+def adjust_learning_rate(optimizer, it, epochs, change_mining_step):
+    if it < change_mining_step:  # Primeiras epochs com semi-hard mining
+        lr = 3e-4
+    elif it < epochs-5:  # Epochs com hard mining
+        lr = 1e-4
+    else:  # Últimas 5 epochs
+        lr = 3e-5
+    
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    
 # --------------------------------------------------------------------------------------------------------
 
 def parse_args():

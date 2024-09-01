@@ -9,7 +9,7 @@ from torch.amp import GradScaler, autocast
 from models.NN2 import FaceNet
 from models.InceptionResNetV1 import InceptionResnetV1
 
-from utils.utils import parse_args, transform, TripletDataset, BalancedBatchSampler, TripletLoss, ValTripletsDataset, calc_val_loss, save_losses
+from utils.utils import parse_args, transform, TripletDataset, BalancedBatchSampler, TripletLoss, ValTripletsDataset, calc_val_loss, save_losses, adjust_learning_rate
 from triplet_mining import semi_hard_triplet_mining, hard_negative_triplet_mining
 
 torch.set_float32_matmul_precision('high')
@@ -42,7 +42,6 @@ def train(
     val_dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     triplet_loss: TripletLoss,
-    scheduler: torch.optim.lr_scheduler = None,
     scaler: GradScaler = None,
     epochs: int = 20,
     margin: float = 0.2,
@@ -53,7 +52,7 @@ def train(
 ):
     total_accumulation_size = accumulation_steps * batch_size
     accumulated_embeddings = torch.zeros((total_accumulation_size, EMB_SIZE), device=device)
-    accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.long, device=device)
+    accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.int16, device=device)
     accumulated_imgs = torch.zeros((total_accumulation_size, 3, 112, 112), dtype=DTYPE, device=device)
 
     for epoch in range(epochs):
@@ -108,8 +107,8 @@ def train(
                 
                 batch_in_accumulation = 0
 
-        if scheduler is not None:
-            scheduler.step()
+        # Atualiza o scheduler customizado
+        adjust_learning_rate(optimizer, epoch, epochs, CHANGE_MINING_STRATEGY)
 
         val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device, dtype=DTYPE)
         epoch_loss = accumulated_loss / len(dataloader)
@@ -194,7 +193,6 @@ if __name__ == '__main__':
     # Scaler, otimizador e scheduler
     scaler = GradScaler()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
     
     print(f'\nModel: {model_classe}')
     print(f'Device: {device}')
@@ -207,7 +205,6 @@ if __name__ == '__main__':
         val_dataloader      = val_dataloader,
         optimizer           = optimizer,
         triplet_loss        = triplet_loss,
-        scheduler           = scheduler,
         scaler              = scaler,
         epochs              = epochs,
         checkpoint_path     = CHECKPOINT_PATH,
