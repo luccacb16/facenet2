@@ -28,6 +28,11 @@ EMB_SIZE = 64
 CHANGE_MINING_STRATEGY = 0
 N_VAL_TRIPLETS = 128
 DOCS_PATH = './docs/'
+
+model_class_map = {
+    'NN2': FaceNet,
+    'InceptionResnetV1': InceptionResnetV1
+}
         
 # --------------------------------------------------------------------------------------------------------
 
@@ -119,6 +124,7 @@ def train(
 if __name__ == '__main__':
     args = parse_args()
     
+    model_classe = args.model
     batch_size = args.batch_size
     accumulation = args.accumulation
     epochs = args.epochs
@@ -180,9 +186,11 @@ if __name__ == '__main__':
     triplet_loss = TripletLoss(margin=margin)
     
     # Modelo
-    model = FaceNet(emb_size=EMB_SIZE, 
-                    restore_from_checkpoint=restore_from_checkpoint).to(device)
+    #model = FaceNet(emb_size=EMB_SIZE, restore_from_checkpoint=restore_from_checkpoint).to(device)
     #model = InceptionResnetV1(emb_size=EMB_SIZE).to(device)
+    if model_classe not in model_class_map:
+        raise ValueError(f"Model {model_classe} not found")
+    model = model_class_map[model_classe](emb_size=EMB_SIZE).to(device)
     
     if not colab:
         model = torch.compile(model)

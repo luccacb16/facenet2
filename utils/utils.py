@@ -208,6 +208,7 @@ def save_losses(train_losses: list, val_losses: list, save_path: str = './imgs/'
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Treinar a rede neural com triplet loss")
+    parser.add_argument('--model', type=str, choices=['NN2, InceptionResnetV1'], default='NN2', help='Modelo a ser treinado (default: InceptionResnetV1)')
     parser.add_argument('--num_val_triplets', type=int, default=128, help='Número de triplets para validação (default: 128)')
     parser.add_argument('--batch_size', type=int, default=32, help='Tamanho do batch e quantidade de identidades por batch (default: 32)')
     parser.add_argument('--accumulation', type=int, default=512, help='Acumulação de gradientes e amostras para triplet mining (default: 512)')
