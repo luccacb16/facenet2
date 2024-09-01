@@ -30,8 +30,8 @@ N_VAL_TRIPLETS = 128
 DOCS_PATH = './docs/'
 
 model_class_map = {
-    'NN2': FaceNet,
-    'InceptionResnetV1': InceptionResnetV1
+    'nn2': FaceNet,
+    'inceptionresnetv1': InceptionResnetV1
 }
         
 # --------------------------------------------------------------------------------------------------------
@@ -141,10 +141,6 @@ if __name__ == '__main__':
     if not os.path.exists(CHECKPOINT_PATH):
         os.makedirs(CHECKPOINT_PATH)
     
-    print(f'\nDevice: {device}')
-    print(f'Device name: {torch.cuda.get_device_name()}')
-    print(f'Using tensor type: {DTYPE}\n')
-    
     # Carregando datasets
     train_df = pd.read_csv(os.path.join(DATA_PATH, 'CASIA/casia_train.csv'))
     
@@ -188,9 +184,9 @@ if __name__ == '__main__':
     # Modelo
     #model = FaceNet(emb_size=EMB_SIZE, restore_from_checkpoint=restore_from_checkpoint).to(device)
     #model = InceptionResnetV1(emb_size=EMB_SIZE).to(device)
-    if model_classe not in model_class_map:
+    if model_classe.lower() not in model_class_map:
         raise ValueError(f"Model {model_classe} not found")
-    model = model_class_map[model_classe](emb_size=EMB_SIZE).to(device)
+    model = model_class_map[model_classe.lower()](emb_size=EMB_SIZE).to(device)
     
     if not colab:
         model = torch.compile(model)
@@ -199,6 +195,11 @@ if __name__ == '__main__':
     scaler = GradScaler()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+    
+    print(f'\nModel: {model_classe}')
+    print(f'Device: {device}')
+    print(f'Device name: {torch.cuda.get_device_name()}')
+    print(f'Using tensor type: {DTYPE}\n')
         
     train_losses, val_losses = train(
         model               = model,
