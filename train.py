@@ -187,7 +187,7 @@ if __name__ == '__main__':
     
     # Scaler, otimizador e scheduler
     scaler = GradScaler()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
         
     train_losses, val_losses = train(
