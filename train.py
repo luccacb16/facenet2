@@ -92,8 +92,6 @@ def train(
                 scaler.step(optimizer)
                 scaler.update()
                 
-                if scheduler is not None:
-                    scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
                 
                 accumulated_loss += loss.item() * accumulation_steps
@@ -103,6 +101,9 @@ def train(
                 accumulated_imgs.zero_()
                 
                 batch_in_accumulation = 0
+
+        if scheduler is not None:
+            scheduler.step()
 
         val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device, dtype=DTYPE)
         epoch_loss = accumulated_loss / len(dataloader)
@@ -187,20 +188,7 @@ if __name__ == '__main__':
     # Scaler, otimizador e scheduler
     scaler = GradScaler()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=1e-3,
-        total_steps=len(dataloader) * epochs,
-        epochs=epochs,
-        steps_per_epoch=len(dataloader),
-        pct_start=0.3,
-        anneal_strategy='cos',
-        cycle_momentum=True,
-        base_momentum=0.85,
-        max_momentum=0.95,
-        div_factor=25,
-        final_div_factor=1e4
-    )
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
         
     train_losses, val_losses = train(
         model               = model,
