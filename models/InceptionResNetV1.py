@@ -152,6 +152,19 @@ class InceptionResnetV1(nn.Module):
         self.dropout = nn.Dropout(0.6)
         self.last_linear = nn.Linear(1792, emb_size, bias=False)
         self.last_bn = nn.BatchNorm1d(emb_size, eps=0.001, momentum=0.1, affine=True)
+        
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(module, nn.BatchNorm2d):
+                nn.init.constant_(module.weight, 1)
+                nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.Linear):
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
         x = self.conv2d_1a(x)

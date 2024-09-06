@@ -208,9 +208,9 @@ def adjust_learning_rate(optimizer, it, epochs, change_mining_step):
     if it < change_mining_step:  # Primeiras epochs com semi-hard mining
         lr = 3e-4
     elif it < epochs-5:  # Epochs com hard mining
-        lr = 1e-4
+        lr = 6e-5
     else:  # Últimas 5 epochs
-        lr = 3e-5
+        lr = 1e-5
     
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr

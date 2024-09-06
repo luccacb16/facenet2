@@ -247,3 +247,35 @@ class LFWSingleDataset(Dataset):
             image = self.transform(image)
         
         return image, self.labels[idx]
+    
+def get_threshold_at_far(pairs: pd.DataFrame, target_far: float) -> float:
+    fpr, tpr, thresholds = roc_curve(pairs['label'], -pairs['distance'])
+    far_idx = np.where(fpr <= target_far)[0][-1]
+    far_threshold = thresholds[far_idx]
+    
+    return -far_threshold
+
+def calc_accuracy(model, acc_dataloader, device='cuda'):
+    model.eval()
+    pairs_df = acc_dataloader.dataset.pairs_df
+    
+    # Calcular distâncias    
+    distances = []
+    with torch.no_grad():
+        for img1_batch, img2_batch, _ in acc_dataloader:
+            img1_batch, img2_batch = img1_batch.to(device), img2_batch.to(device)
+            outputs1, outputs2 = model(img1_batch), model(img2_batch)
+            batch_distances = torch.nn.functional.pairwise_distance(outputs1, outputs2, p=2)
+            distances.extend(batch_distances.cpu().numpy())
+
+    model.train()
+    
+    pairs_df['distance'] = distances
+    
+    # Obter threshold
+    threshold = get_threshold_at_far(pairs_df, 1e-3)
+    
+    # Calcular acurácia
+    acc = accuracy(pairs_df, threshold)
+    
+    return acc

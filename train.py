@@ -1,6 +1,7 @@
 import pandas as pd
 from tqdm import tqdm
 import os
+import wandb
 
 import torch
 from torch.utils.data import DataLoader
@@ -9,6 +10,7 @@ from torch.amp import GradScaler, autocast
 from models.NN2 import FaceNet
 from models.InceptionResNetV1 import InceptionResnetV1
 
+from utils.eval_utils import calc_accuracy, get_pairs, LFWPairsDataset
 from utils.utils import parse_args, transform, TripletDataset, BalancedBatchSampler, TripletLoss, ValTripletsDataset, calc_val_loss, save_losses, adjust_learning_rate
 from triplet_mining import semi_hard_triplet_mining, hard_negative_triplet_mining
 
@@ -24,7 +26,7 @@ if torch.cuda.is_available():
     if gpu_properties.major < 8:
         DTYPE = torch.float16
         
-EMB_SIZE = 64
+EMB_SIZE = 128
 CHANGE_MINING_STRATEGY = 0
 N_VAL_TRIPLETS = 128
 DOCS_PATH = './docs/'
@@ -40,6 +42,7 @@ def train(
     model: torch.nn.Module,
     dataloader: DataLoader,
     val_dataloader: DataLoader,
+    acc_dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     triplet_loss: TripletLoss,
     scaler: GradScaler = None,
@@ -97,6 +100,11 @@ def train(
                 scaler.step(optimizer)
                 scaler.update()
                 
+                val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device)
+                
+                # Log
+                wandb.log({'epoch': epoch, 'train_loss': loss.item(), 'val_loss': val_loss, 'lr': optimizer.param_groups[0]['lr']})
+                
                 optimizer.zero_grad(set_to_none=True)
                 
                 accumulated_loss += loss.item() * accumulation_steps
@@ -107,6 +115,10 @@ def train(
                 
                 batch_in_accumulation = 0
 
+        # Acurácia
+        epoch_accuracy = calc_accuracy(model, acc_dataloader, device)
+        wandb.log({'epoch': epoch, 'accuracy': epoch_accuracy})
+
         # Atualiza o scheduler customizado
         adjust_learning_rate(optimizer, epoch, epochs, CHANGE_MINING_STRATEGY)
 
@@ -115,8 +127,6 @@ def train(
 
         print(f"Epoch [{epoch+1}/{epochs}] | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
         torch.save(model.state_dict(), os.path.join(checkpoint_path, f'epoch_{epoch+1}.pt'))
-
-    return epoch_loss, val_loss
 
 # --------------------------------------------------------------------------------------------------------
 
@@ -134,6 +144,18 @@ if __name__ == '__main__':
     colab = args.colab
     restore_from_checkpoint = args.restore
     CHANGE_MINING_STRATEGY = args.change_mining_step
+    
+    config = {
+        'batch_size': batch_size,
+        'accumulation': accumulation,
+        'epochs': epochs,
+        'margin': margin,
+        'num_workers': num_workers,
+        'change_mining_strategy': CHANGE_MINING_STRATEGY,
+    }
+    
+    wandb.login(key=os.environ['WANDB_API_KEY'])
+    wandb.init(project='facenet', config=config)
     
     accumulation_steps = accumulation // batch_size
     
@@ -164,6 +186,11 @@ if __name__ == '__main__':
                                 pin_memory=True,
                                 num_workers=num_workers)
     
+    # Loader de acurácia
+    acc_pairs = get_pairs(test_df, N_VAL_TRIPLETS)
+    acc_dataset = LFWPairsDataset(acc_pairs, transform=transform)
+    acc_dataloader = DataLoader(acc_dataset, batch_size=N_VAL_TRIPLETS, shuffle=False, pin_memory=True, num_workers=num_workers)
+    
     # Loader de treino
     triplet_dataset = TripletDataset(train_df, 
                                      transform=transform, 
@@ -189,6 +216,7 @@ if __name__ == '__main__':
     
     if not colab:
         model = torch.compile(model)
+    wandb.watch(model, log='all', log_freq=25)
     
     # Scaler, otimizador e scheduler
     scaler = GradScaler()
@@ -203,6 +231,7 @@ if __name__ == '__main__':
         model               = model,
         dataloader          = dataloader,
         val_dataloader      = val_dataloader,
+        acc_dataloader      = acc_dataloader,
         optimizer           = optimizer,
         triplet_loss        = triplet_loss,
         scaler              = scaler,
@@ -213,6 +242,3 @@ if __name__ == '__main__':
         accumulation_steps  = accumulation_steps,
         batch_size          = batch_size
     )
-    
-    # Salva a imagem com os resultados
-    save_losses(train_losses, val_losses, DOCS_PATH)
