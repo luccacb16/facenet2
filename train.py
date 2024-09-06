@@ -2,6 +2,7 @@ import pandas as pd
 from tqdm import tqdm
 import os
 import wandb
+from dotenv import load_dotenv
 
 import torch
 from torch.utils.data import DataLoader
@@ -13,6 +14,8 @@ from models.InceptionResNetV1 import InceptionResnetV1
 from utils.eval_utils import calc_accuracy, get_pairs, LFWPairsDataset
 from utils.utils import parse_args, transform, TripletDataset, BalancedBatchSampler, TripletLoss, ValTripletsDataset, calc_val_loss, save_losses, adjust_learning_rate
 from triplet_mining import semi_hard_triplet_mining, hard_negative_triplet_mining
+
+load_dotenv()
 
 torch.set_float32_matmul_precision('high')
 torch.backends.cudnn.benchmark = True
