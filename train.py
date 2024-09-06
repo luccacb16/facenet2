@@ -103,11 +103,6 @@ def train(
                 scaler.step(optimizer)
                 scaler.update()
                 
-                val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device)
-                
-                # Log
-                wandb.log({'epoch': epoch, 'train_loss': loss.item(), 'val_loss': val_loss, 'lr': optimizer.param_groups[0]['lr']})
-                
                 optimizer.zero_grad(set_to_none=True)
                 
                 accumulated_loss += loss.item() * accumulation_steps
@@ -118,6 +113,10 @@ def train(
                 
                 batch_in_accumulation = 0
 
+        # Log
+        val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device)
+        wandb.log({'epoch': epoch, 'train_loss': loss.item(), 'val_loss': val_loss, 'lr': optimizer.param_groups[0]['lr']})
+        
         # Acurácia
         epoch_accuracy = calc_accuracy(model, acc_dataloader, device)
         wandb.log({'epoch': epoch, 'accuracy': epoch_accuracy})
