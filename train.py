@@ -122,7 +122,7 @@ def train(
         wandb.log({'epoch': epoch, 'accuracy': epoch_accuracy})
 
         # Atualiza o scheduler customizado
-        adjust_learning_rate(optimizer, epoch, epochs, CHANGE_MINING_STRATEGY)
+        #adjust_learning_rate(optimizer, epoch, epochs, CHANGE_MINING_STRATEGY)
 
         val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device, dtype=DTYPE)
         epoch_loss = accumulated_loss / len(dataloader)
