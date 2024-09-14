@@ -5,21 +5,30 @@ import pandas as pd
 import argparse
 from PIL import Image
 import os
+import wandb
+import math
 
 import torch
 import torch.nn as nn
-from torchvision.transforms import Compose, ToTensor, Normalize, Resize
+from torchvision.transforms import Compose, ToTensor, Normalize, Resize, RandomResizedCrop, RandomHorizontalFlip, RandomRotation, ColorJitter
 from torch.utils.data import Dataset, Sampler
 import torch.nn.functional as F
 from torch.amp import autocast
 
-transform = Compose(
-    [
-    Resize((112, 112)),
+transform = Compose([
+    Resize((160, 160)),
     ToTensor(), 
+    Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])    
+])
+
+aug_transform = Compose([
+    RandomResizedCrop(160, scale=(0.8, 1.0)),
+    RandomHorizontalFlip(),
+    RandomRotation(15),
+    ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    ToTensor(),
     Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ]
-)
+])
 
 # --------------------------------------------------------------------------------------------------------
 
@@ -180,58 +189,50 @@ def calc_val_loss(model, val_loader, loss, device='cuda', dtype=torch.bfloat16):
     model.train()
     
     return val_loss
+    
+class WarmUpCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, epochs, warmup_epochs, min_lr, max_lr, last_epoch=-1):
+        self.epochs = epochs
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.warmup_epochs = warmup_epochs
+        super(WarmUpCosineAnnealingLR, self).__init__(optimizer, last_epoch)
 
-def save_losses(train_losses: list, val_losses: list, save_path: str = './imgs/'):
-    """
-    Salva os valores das perdas de treino e validação em um gráfico.
-
-    Args:
-        train_losses (list): Lista contendo os valores das perdas de treino.
-        val_losses (list): Lista contendo os valores das perdas de validação.
-        save_path (str): Caminho para salvar a imagem. Padrão é './imgs/'.
-    """
+    def get_lr(self):
+        if self.last_epoch < self.warmup_epochs:
+            alpha = self.last_epoch / self.warmup_epochs
+            return [self.min_lr + (self.max_lr - self.min_lr) * alpha for _ in self.base_lrs]
+        else:
+            progress = (self.last_epoch - self.warmup_epochs) / (self.epochs - self.warmup_epochs)
+            cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
+            return [self.min_lr + (self.max_lr - self.min_lr) * cosine_decay for _ in self.base_lrs]
     
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-    
-    plt.figure(figsize=(10, 6))
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(val_losses, label='Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Train and Validation Loss')
-    plt.legend()
-    plt.grid()
-    plt.savefig(save_path + 'losses.png')
-    
-def adjust_learning_rate(optimizer, it, epochs, change_mining_step):
-    if it < change_mining_step:  # Primeiras epochs com semi-hard mining
-        lr = 3e-4
-    elif it < epochs-5:  # Epochs com hard mining
-        lr = 6e-5
-    else:  # Últimas 5 epochs
-        lr = 1e-5
-    
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+def save_model_artifact(checkpoint_path, epoch):
+    artifact = wandb.Artifact(f'epoch_{epoch}', type='model')
+    artifact.add_file(os.path.join(checkpoint_path, f'epoch_{epoch}.pt'))
+    wandb.log_artifact(artifact)
     
 # --------------------------------------------------------------------------------------------------------
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Treinar a rede neural com triplet loss")
-    parser.add_argument('--model', type=str, choices=['NN2', 'InceptionResNetV1'], default='NN2', help='Modelo a ser treinado (default: InceptionResnetV1)')
+    parser.add_argument('--model', type=str, default='faceresnet50', help='Modelo a ser utilizado (default: faceresnet50)')
     parser.add_argument('--num_val_triplets', type=int, default=128, help='Número de triplets para validação (default: 128)')
     parser.add_argument('--batch_size', type=int, default=32, help='Tamanho do batch e quantidade de identidades por batch (default: 32)')
     parser.add_argument('--accumulation', type=int, default=512, help='Acumulação de gradientes e amostras para triplet mining (default: 512)')
     parser.add_argument('--change_mining_step', type=int, default=8, help='Número de epochs para mudar o método de triplet mining, de semi-hard para negative hard (default: 8)')
-    parser.add_argument('--embedding_size', type=int, default=64, help='Tamanho do vetor de embeddings (default: 64)')
+    parser.add_argument('--emb_size', type=int, default=512, help='Tamanho do vetor de embeddings (default: 512)')
     parser.add_argument('--epochs', type=int, default=20, help='Número de epochs (default: 20)')
-    parser.add_argument('--margin', type=float, default=0.4, help='Margem para triplet loss (default: 0.4)')
+    parser.add_argument('--margin', type=float, default=0.2, help='Margem para triplet loss (default: 0.2)')
     parser.add_argument('--num_workers', type=int, default=1, help='Número de workers para o DataLoader (default: 1)')
     parser.add_argument('--data_path', type=str, default='./data/', help='Caminho para o dataset (default: ./data/)')
     parser.add_argument('--checkpoint_path', type=str, default='./checkpoints/', help='Caminho para salvar os checkpoints (default: ./checkpoints/)')
     parser.add_argument('--device', type=str, default='cuda', help='Dispositivo para treinamento (default: cuda)')
-    parser.add_argument('--colab', type=bool, default=False, help='Se está rodando no Google Colab (default: False)')
+    parser.add_argument('--compile', action='store_true', help='Se deve compilar o modelo (default: False)')
+    parser.add_argument('--wandb', action='store_true', help='Se está rodando com o Weights & Biases (default: False)')
     parser.add_argument('--restore', type=str, default=None, help='Caminho para um checkpoint para restaurar o treinamento (default: None)')
+    parser.add_argument('--min_lr', type=float, default=1e-5, help='Taxa de aprendizado mínima (default: 1e-5)')
+    parser.add_argument('--max_lr', type=float, default=3e-4, help='Taxa de aprendizado máxima (default: 3e-4)')
+    parser.add_argument('--warmup_epochs', type=int, default=5, help='Número de epochs para warmup (default: 5)')
     
     return parser.parse_args()

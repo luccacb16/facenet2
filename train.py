@@ -2,7 +2,6 @@ import pandas as pd
 from tqdm import tqdm
 import os
 import wandb
-from dotenv import load_dotenv
 
 import torch
 from torch.utils.data import DataLoader
@@ -10,12 +9,11 @@ from torch.amp import GradScaler, autocast
 
 from models.NN2 import FaceNet
 from models.InceptionResNetV1 import InceptionResnetV1
+from models.faceresnet50 import FaceResNet50
 
 from utils.eval_utils import calc_accuracy, get_pairs, LFWPairsDataset
-from utils.utils import parse_args, transform, TripletDataset, BalancedBatchSampler, TripletLoss, ValTripletsDataset, calc_val_loss, save_losses, adjust_learning_rate
+from utils.utils import parse_args, aug_transform, transform, TripletDataset, BalancedBatchSampler, TripletLoss, ValTripletsDataset, calc_val_loss, WarmUpCosineAnnealingLR, save_model_artifact
 from triplet_mining import semi_hard_triplet_mining, hard_negative_triplet_mining
-
-load_dotenv()
 
 torch.set_float32_matmul_precision('high')
 torch.backends.cudnn.benchmark = True
@@ -32,11 +30,12 @@ if torch.cuda.is_available():
 EMB_SIZE = 128
 CHANGE_MINING_STRATEGY = 0
 N_VAL_TRIPLETS = 128
-DOCS_PATH = './docs/'
+USING_WANDB = False
 
-model_class_map = {
+model_map = {
     'nn2': FaceNet,
-    'inceptionresnetv1': InceptionResnetV1
+    'inceptionresnetv1': InceptionResnetV1,
+    'faceresnet50': FaceResNet50
 }
         
 # --------------------------------------------------------------------------------------------------------
@@ -48,6 +47,7 @@ def train(
     acc_dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     triplet_loss: TripletLoss,
+    scheduler = None,
     scaler: GradScaler = None,
     epochs: int = 20,
     margin: float = 0.2,
@@ -59,7 +59,7 @@ def train(
     total_accumulation_size = accumulation_steps * batch_size
     accumulated_embeddings = torch.zeros((total_accumulation_size, EMB_SIZE), device=device)
     accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.int16, device=device)
-    accumulated_imgs = torch.zeros((total_accumulation_size, 3, 112, 112), dtype=DTYPE, device=device)
+    accumulated_imgs = torch.zeros((total_accumulation_size, 3, 160, 160), dtype=DTYPE, device=device)
 
     for epoch in range(epochs):
         dataloader.batch_sampler.set_epoch(epoch)
@@ -113,29 +113,28 @@ def train(
                 
                 batch_in_accumulation = 0
 
+        epoch_loss = accumulated_loss / len(dataloader)
+
         # Log
         val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device)
-        wandb.log({'epoch': epoch, 'train_loss': loss.item(), 'val_loss': val_loss, 'lr': optimizer.param_groups[0]['lr']})
         
         # Acurácia
         epoch_accuracy = calc_accuracy(model, acc_dataloader, device)
-        wandb.log({'epoch': epoch, 'accuracy': epoch_accuracy})
-
-        # Atualiza o scheduler customizado
-        #adjust_learning_rate(optimizer, epoch, epochs, CHANGE_MINING_STRATEGY)
-
-        val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device, dtype=DTYPE)
-        epoch_loss = accumulated_loss / len(dataloader)
-
-        print(f"Epoch [{epoch+1}/{epochs}] | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
-        torch.save(model.state_dict(), os.path.join(checkpoint_path, f'epoch_{epoch+1}.pt'))
+        print(f"Epoch [{epoch+1}/{epochs}] | accuracy: {epoch_accuracy:.4f} | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
+        model.save_checkpoint(checkpoint_path, f'epoch_{epoch+1}.pt')
+        
+        if USING_WANDB:
+            wandb.log({'epoch': epoch, 'accuracy': epoch_accuracy, 'train_loss': epoch_loss, 'val_loss': val_loss, 'lr': optimizer.param_groups[0]['lr']})
+            save_model_artifact(checkpoint_path, epoch+1)
+        
+        scheduler.step()
 
 # --------------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
     args = parse_args()
     
-    model_classe = args.model
+    model_name = args.model
     batch_size = args.batch_size
     accumulation = args.accumulation
     epochs = args.epochs
@@ -143,9 +142,14 @@ if __name__ == '__main__':
     num_workers = args.num_workers
     DATA_PATH = args.data_path
     CHECKPOINT_PATH = args.checkpoint_path
-    colab = args.colab
-    restore_from_checkpoint = args.restore
+    compile = args.compile
+    pretrained = args.restore
     CHANGE_MINING_STRATEGY = args.change_mining_step
+    min_lr = args.min_lr
+    max_lr = args.max_lr
+    warmup_epochs = args.warmup_epochs
+    USING_WANDB = args.wandb
+    EMB_SIZE = args.emb_size
     
     config = {
         'batch_size': batch_size,
@@ -156,8 +160,9 @@ if __name__ == '__main__':
         'change_mining_strategy': CHANGE_MINING_STRATEGY,
     }
     
-    wandb.login(key=os.environ['WANDB_API_KEY'])
-    wandb.init(project='facenet', config=config)
+    if USING_WANDB:
+        wandb.login(key=os.environ['WANDB_API_KEY'])
+        wandb.init(project='facenet', config=config)
     
     accumulation_steps = accumulation // batch_size
     
@@ -165,16 +170,16 @@ if __name__ == '__main__':
         os.makedirs(CHECKPOINT_PATH)
     
     # Carregando datasets
-    train_df = pd.read_csv(os.path.join(DATA_PATH, 'CASIA/casia_train.csv'))
+    train_df = pd.read_csv(os.path.join(DATA_PATH, 'train.csv'))
     
     # Treino
     min_images_per_id = accumulation // batch_size
     train_df = train_df.groupby('id').filter(lambda x: len(x) >= min_images_per_id)
-    train_df['path'] = train_df['path'].apply(lambda x: os.path.join(DATA_PATH, 'CASIA/casia-faces/', x))
+    train_df['path'] = train_df['path'].apply(lambda x: os.path.join(DATA_PATH, 'casia-faces/', x))
     
     # Teste
-    test_df = pd.read_csv(os.path.join(DATA_PATH, 'CASIA/casia_test.csv'))
-    test_df['path'] = test_df['path'].apply(lambda x: os.path.join(DATA_PATH, 'CASIA/casia-faces/', x))
+    test_df = pd.read_csv(os.path.join(DATA_PATH, 'test.csv'))
+    train_df['path'] = train_df['path'].apply(lambda x: os.path.join(DATA_PATH, 'casia-faces/', x))
     
     # Loader de validação
     val_triplets = ValTripletsDataset(test_df, 
@@ -210,21 +215,27 @@ if __name__ == '__main__':
     triplet_loss = TripletLoss(margin=margin)
     
     # Modelo
-    #model = FaceNet(emb_size=EMB_SIZE, restore_from_checkpoint=restore_from_checkpoint).to(device)
-    #model = InceptionResnetV1(emb_size=EMB_SIZE).to(device)
-    if model_classe.lower() not in model_class_map:
-        raise ValueError(f"Model {model_classe} not found")
-    model = model_class_map[model_classe.lower()](emb_size=EMB_SIZE).to(device)
+    if model_name.lower() not in model_map:
+        raise ValueError(f"Model {model_name} not found")
+
+    if pretrained:
+        model = model_map[model_name.lower()].load_checkpoint(pretrained).to(device)
+        model.freeze()
+    else:
+        model = model_map[model_name.lower()](emb_size=EMB_SIZE).to(device)
     
-    if not colab:
+    if compile:
         model = torch.compile(model)
-    wandb.watch(model, log='all', log_freq=25)
     
     # Scaler, otimizador e scheduler
     scaler = GradScaler()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.AdamW([
+        {'params': model.parameters(), 'lr': max_lr, 'weight_decay': 1e-5, 'initial_lr': max_lr}
+    ])
     
-    print(f'\nModel: {model_classe}')
+    scheduler = WarmUpCosineAnnealingLR(optimizer, epochs, warmup_epochs, min_lr, max_lr, last_epoch=-1)
+    
+    print(f'\nModel: {model_name} | Params: {model.num_params}')
     print(f'Device: {device}')
     print(f'Device name: {torch.cuda.get_device_name()}')
     print(f'Using tensor type: {DTYPE}\n')
@@ -236,6 +247,7 @@ if __name__ == '__main__':
         acc_dataloader      = acc_dataloader,
         optimizer           = optimizer,
         triplet_loss        = triplet_loss,
+        scheduler           = scheduler,
         scaler              = scaler,
         epochs              = epochs,
         checkpoint_path     = CHECKPOINT_PATH,

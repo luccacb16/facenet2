@@ -52,7 +52,6 @@ def get_pairs(ids_df: pd.DataFrame, n_pairs: int | None = None) -> pd.DataFrame:
 
     return pd.DataFrame(pairs, columns=['img1', 'img2', 'label'])
 
-
 def plot_distribution_and_ROC(pairs: pd.DataFrame, model_name: str, target_far=1e-3) -> float:
     col_name = 'distance'
     
