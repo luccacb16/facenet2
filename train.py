@@ -242,6 +242,8 @@ if __name__ == '__main__':
     print(f'Device: {device}')
     print(f'Device name: {torch.cuda.get_device_name()}')
     print(f'Using tensor type: {DTYPE}\n')
+    
+    print(f'\nImagens: {len(train_df)} | Identidades: {train_df["id"].nunique()} | imgs/id: {len(train_df) / train_df["id"].nunique()}')
         
     train_losses, val_losses = train(
         model               = model,
