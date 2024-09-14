@@ -26,7 +26,7 @@ class FaceResNet50(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc1(x)
         
-        #x = F.normalize(x, p=2, dim=1) # L2
+        x = F.normalize(x, p=2, dim=1) # L2
         return x
     
     def _initialize_weights(self):
