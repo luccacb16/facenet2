@@ -87,8 +87,10 @@ def train(
             if batch_in_accumulation == accumulation_steps:
                 if (epoch + 1) > CHANGE_MINING_STRATEGY:
                     triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
+                    mining = 'hard'
                 else:
                     triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=False)
+                    mining = 'semi-hard'
 
                 anchor_imgs = accumulated_imgs[triplets[:, 0]]
                 positive_imgs = accumulated_imgs[triplets[:, 1]]
@@ -123,7 +125,7 @@ def train(
         
         # Acurácia
         epoch_accuracy = calc_accuracy(model, acc_dataloader, device)
-        print(f"Epoch [{epoch+1}/{epochs}] | accuracy: {epoch_accuracy:.4f} | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
+        print(f"Epoch [{epoch+1}/{epochs}] | accuracy: {epoch_accuracy:.4f} | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e} | mining: {mining}")
         model.save_checkpoint(checkpoint_path, f'epoch_{epoch+1}.pt')
         
         if USING_WANDB:
