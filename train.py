@@ -57,6 +57,81 @@ def train(
     batch_size: int = 32
 ):
     total_accumulation_size = accumulation_steps * batch_size
+
+    for epoch in range(epochs):
+        dataloader.batch_sampler.set_epoch(epoch)
+        model.train()
+        accumulated_loss = 0.0
+        optimizer.zero_grad(set_to_none=True)
+        
+        # Create tensors inside the epoch loop
+        accumulated_embeddings = torch.zeros((total_accumulation_size, EMB_SIZE), device=device)
+        accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.int16, device=device)
+        accumulated_imgs = torch.zeros((total_accumulation_size, 3, 160, 160), dtype=DTYPE, device=device)
+
+        batch_in_accumulation = 0
+        for i, (imgs, labels) in enumerate(dataloader):
+            imgs, labels = imgs.to(device), labels.to(device)
+            batch_index = batch_in_accumulation * batch_size
+
+            with torch.no_grad():
+                with autocast(dtype=DTYPE, device_type=device):
+                    embeddings = model(imgs)
+            
+            accumulated_embeddings[batch_index:batch_index + batch_size] = embeddings
+            accumulated_labels[batch_index:batch_index + batch_size] = labels
+            accumulated_imgs[batch_index:batch_index + batch_size] = imgs
+
+            batch_in_accumulation += 1
+
+            if batch_in_accumulation == accumulation_steps:
+                if CHANGE_MINING_STRATEGY > 0 and (epoch + 1) > CHANGE_MINING_STRATEGY:
+                    triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
+                else:
+                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=False)
+
+                anchor_imgs = accumulated_imgs[triplets[:, 0]]
+                positive_imgs = accumulated_imgs[triplets[:, 1]]
+                negative_imgs = accumulated_imgs[triplets[:, 2]]
+                
+                with autocast(dtype=DTYPE, device_type=device):
+                    anchor_embeddings = model(anchor_imgs)
+                    positive_embeddings = model(positive_imgs)
+                    negative_embeddings = model(negative_imgs)
+                    loss = triplet_loss(anchor_embeddings, positive_embeddings, negative_embeddings)
+                
+                loss = loss / accumulation_steps
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+                
+                optimizer.zero_grad(set_to_none=True)
+                
+                accumulated_loss += loss.item() * accumulation_steps
+
+                # Clean tensors after weight update
+                del triplets, anchor_imgs, positive_imgs, negative_imgs
+                del anchor_embeddings, positive_embeddings, negative_embeddings
+                del accumulated_embeddings, accumulated_labels, accumulated_imgs
+                torch.cuda.empty_cache()
+
+                batch_in_accumulation = 0
+
+        epoch_loss = accumulated_loss / len(dataloader)
+
+        # Log
+        val_loss = calc_val_loss(model, val_dataloader, triplet_loss, device)
+        
+        # Acurácia
+        epoch_accuracy = calc_accuracy(model, acc_dataloader, device)
+        print(f"Epoch [{epoch+1}/{epochs}] | accuracy: {epoch_accuracy:.4f} | loss: {epoch_loss:.6f} | val_loss: {val_loss:.6f} | LR: {optimizer.param_groups[0]['lr']:.0e}")
+        model.save_checkpoint(checkpoint_path, f'epoch_{epoch+1}.pt')
+        
+        if USING_WANDB:
+            wandb.log({'epoch': epoch, 'accuracy': epoch_accuracy, 'train_loss': epoch_loss, 'val_loss': val_loss, 'lr': optimizer.param_groups[0]['lr']})
+            save_model_artifact(checkpoint_path, epoch+1)
+        
+        scheduler.step()
     accumulated_embeddings = torch.zeros((total_accumulation_size, EMB_SIZE), device=device)
     accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.int16, device=device)
     accumulated_imgs = torch.zeros((total_accumulation_size, 3, 160, 160), dtype=DTYPE, device=device)
