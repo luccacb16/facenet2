@@ -19,7 +19,7 @@ class FaceResNet50(nn.Module):
         self.emb_size = emb_size
         self.n_classes = n_classes
         
-        num_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        self.num_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def forward(self, x):
         x = self.features(x)
