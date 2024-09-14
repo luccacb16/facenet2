@@ -56,33 +56,35 @@ def train(
     accumulation_steps: int = 16,
     batch_size: int = 32
 ):
-    total_accumulation_size = accumulation_steps * batch_size
-    accumulated_embeddings = torch.zeros((total_accumulation_size, EMB_SIZE), device=device)
-    accumulated_labels = torch.zeros(total_accumulation_size, dtype=torch.int16, device=device)
-    accumulated_imgs = torch.zeros((total_accumulation_size, 3, 160, 160), dtype=DTYPE, device=device)
-
     for epoch in range(epochs):
         dataloader.batch_sampler.set_epoch(epoch)
         model.train()
         accumulated_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
         
+        accumulated_embeddings = []
+        accumulated_labels = []
+        accumulated_imgs = []
         batch_in_accumulation = 0
+
         for i, (imgs, labels) in enumerate(dataloader):
-            imgs, labels = imgs.to(device), labels.to(device)
-            batch_index = batch_in_accumulation * batch_size
+            imgs, labels = imgs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
             with torch.no_grad():
                 with autocast(dtype=DTYPE, device_type=device):
                     embeddings = model(imgs)
             
-            accumulated_embeddings[batch_index:batch_index + batch_size] = embeddings
-            accumulated_labels[batch_index:batch_index + batch_size] = labels
-            accumulated_imgs[batch_index:batch_index + batch_size] = imgs
+            accumulated_embeddings.append(embeddings)
+            accumulated_labels.append(labels)
+            accumulated_imgs.append(imgs)
 
             batch_in_accumulation += 1
 
             if batch_in_accumulation == accumulation_steps:
+                accumulated_embeddings = torch.cat(accumulated_embeddings)
+                accumulated_labels = torch.cat(accumulated_labels)
+                accumulated_imgs = torch.cat(accumulated_imgs)
+
                 if CHANGE_MINING_STRATEGY > 0 and (epoch + 1) > CHANGE_MINING_STRATEGY:
                     triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
                 else:
@@ -107,9 +109,14 @@ def train(
                 
                 accumulated_loss += loss.item() * accumulation_steps
 
+                del accumulated_embeddings, accumulated_labels, accumulated_imgs
                 del triplets, anchor_imgs, positive_imgs, negative_imgs
                 del anchor_embeddings, positive_embeddings, negative_embeddings
-                
+                torch.cuda.empty_cache()
+
+                accumulated_embeddings = []
+                accumulated_labels = []
+                accumulated_imgs = []
                 batch_in_accumulation = 0
 
         epoch_loss = accumulated_loss / len(dataloader)
