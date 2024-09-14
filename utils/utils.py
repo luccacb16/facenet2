@@ -234,5 +234,6 @@ def parse_args():
     parser.add_argument('--min_lr', type=float, default=1e-5, help='Taxa de aprendizado mínima (default: 1e-5)')
     parser.add_argument('--max_lr', type=float, default=3e-4, help='Taxa de aprendizado máxima (default: 3e-4)')
     parser.add_argument('--warmup_epochs', type=int, default=5, help='Número de epochs para warmup (default: 5)')
+    parser.add_argument('--hardest', type='store_true', help='Hardest no semi-hard quanto não acha (default: False)')
     
     return parser.parse_args()

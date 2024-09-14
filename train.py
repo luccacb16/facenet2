@@ -31,6 +31,7 @@ EMB_SIZE = 128
 CHANGE_MINING_STRATEGY = 0
 N_VAL_TRIPLETS = 128
 USING_WANDB = False
+HARDEST = False
 
 model_map = {
     'nn2': FaceNet,
@@ -89,7 +90,7 @@ def train(
                     triplets = hard_negative_triplet_mining(accumulated_embeddings, accumulated_labels, device)
                     mining = 'hard'
                 else:
-                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=False)
+                    triplets = semi_hard_triplet_mining(accumulated_embeddings, accumulated_labels, margin, device, hardest=HARDEST)
                     mining = 'semi-hard'
 
                 anchor_imgs = accumulated_imgs[triplets[:, 0]]
@@ -155,6 +156,7 @@ if __name__ == '__main__':
     warmup_epochs = args.warmup_epochs
     USING_WANDB = args.wandb
     EMB_SIZE = args.emb_size
+    HARDEST = args.hardest
     
     config = {
         'batch_size': batch_size,
