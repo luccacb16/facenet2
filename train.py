@@ -179,7 +179,7 @@ if __name__ == '__main__':
     
     # Teste
     test_df = pd.read_csv(os.path.join(DATA_PATH, 'test.csv'))
-    train_df['path'] = train_df['path'].apply(lambda x: os.path.join(DATA_PATH, 'casia-faces/', x))
+    test_df['path'] = test_df['path'].apply(lambda x: os.path.join(DATA_PATH, 'casia-faces/', x))
     
     # Loader de validação
     val_triplets = ValTripletsDataset(test_df, 
