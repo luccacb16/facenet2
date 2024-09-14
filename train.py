@@ -112,7 +112,6 @@ def train(
                 # Clean tensors after weight update
                 del triplets, anchor_imgs, positive_imgs, negative_imgs
                 del anchor_embeddings, positive_embeddings, negative_embeddings
-                del accumulated_embeddings, accumulated_labels, accumulated_imgs
                 torch.cuda.empty_cache()
 
                 batch_in_accumulation = 0
