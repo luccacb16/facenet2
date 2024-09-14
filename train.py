@@ -107,9 +107,8 @@ def train(
                 
                 accumulated_loss += loss.item() * accumulation_steps
 
-                accumulated_embeddings.zero_()
-                accumulated_labels.zero_()
-                accumulated_imgs.zero_()
+                del triplets, anchor_imgs, positive_imgs, negative_imgs
+                del anchor_embeddings, positive_embeddings, negative_embeddings
                 
                 batch_in_accumulation = 0
 
