@@ -14,7 +14,7 @@ class FaceResNet50(nn.Module):
         
         self.fc1 = nn.Linear(2048, emb_size)
 
-        self._initialize_weights()
+        #self._initialize_weights()
         
         self.emb_size = emb_size
         self.n_classes = n_classes
@@ -39,10 +39,7 @@ class FaceResNet50(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
-                if m is self.fc2:
-                    nn.init.normal_(m.weight, mean=0, std=0.01)
-                else:
-                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 nn.init.constant_(m.bias, 0)
                 
     def save_checkpoint(self, path, filename):
